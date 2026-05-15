@@ -1,12 +1,7 @@
-from __future__ import print_function
-
 import numpy as np
 from prody import writePDB, confProDy, AtomGroup, parsePDB, Selection
 from .constants import (
     ELEMENT_LIST,
-    element_dict_rev,
-    restype_int_to_str,
-    restype_str_to_int,
     RESTYPE_3TO1,
     RESTYPE_1TO3,
     restype_name_to_atom14_names,
@@ -337,7 +332,7 @@ def get_nearest_neighbours(CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms):
     L2_AB_nn = jnp.take_along_axis(L2_AB, nn_idx, axis=1)
     D_AB_closest = jnp.sqrt(L2_AB_nn[:, 0])
 
-    Y_tmp = Y[nn_idx]      # [A, k, 3]
+    Y_tmp = Y[nn_idx]  # [A, k, 3]
     Y_t_tmp = Y_t[nn_idx]  # [A, k]
     Y_m_tmp = Y_m[nn_idx]  # [A, k]
 
