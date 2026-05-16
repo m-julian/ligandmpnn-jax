@@ -355,11 +355,11 @@ def get_nearest_neighbours(CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms):
 
 
 def featurize(
-    input_dict,
-    cutoff_for_score=8.0,
-    use_atom_context=True,
-    number_of_ligand_atoms=16,
-    model_type="protein_mpnn",
+    input_dict: InputDataDict,
+    cutoff_for_score: float = 8.0,
+    use_atom_context: bool = True,
+    number_of_ligand_atoms: int = 16,
+    model_type: str = "protein_mpnn",
 ):
     output_dict = {}
     if model_type == "ligand_mpnn":
@@ -379,20 +379,12 @@ def featurize(
         )
         mask_XY = (D_XY < cutoff_for_score) * mask * Y_m[:, 0]
         output_dict["mask_XY"] = mask_XY[None,]
-        if "side_chain_mask" in list(input_dict):
-            output_dict["side_chain_mask"] = input_dict["side_chain_mask"][None,]
+
         output_dict["Y"] = Y[None,]
         output_dict["Y_t"] = Y_t[None,]
         output_dict["Y_m"] = Y_m[None,]
         if not use_atom_context:
             output_dict["Y_m"] = 0.0 * output_dict["Y_m"]
-    elif (
-        model_type == "per_residue_label_membrane_mpnn"
-        or model_type == "global_label_membrane_mpnn"
-    ):
-        output_dict["membrane_per_residue_labels"] = input_dict[
-            "membrane_per_residue_labels"
-        ][None,]
 
     R_idx_list = []
     count = 0
@@ -407,7 +399,6 @@ def featurize(
     output_dict["R_idx_original"] = input_dict["R_idx"][None,]
     output_dict["chain_labels"] = input_dict["chain_labels"][None,]
     output_dict["S"] = input_dict["S"][None,]
-    output_dict["chain_mask"] = input_dict["chain_mask"][None,]
     output_dict["mask"] = input_dict["mask"][None,]
 
     output_dict["X"] = input_dict["X"][None,]

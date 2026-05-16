@@ -70,7 +70,7 @@ restype_int_to_str = {
     19: "Y",
     20: "X",
 }
-alphabet = list(restype_str_to_int)
+ALPHABET = list(restype_str_to_int)
 
 ELEMENT_LIST = [
     "H",

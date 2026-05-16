@@ -1,5 +1,3 @@
-import itertools
-import sys
 import numpy as np
 import jax.numpy as jnp
 from flax import nnx
@@ -21,7 +19,6 @@ class ProteinMPNN(nnx.Module):
         device=None,
         atom_context_num=0,
         model_type="protein_mpnn",
-        ligand_mpnn_use_side_chain_context=False,
         *,
         rngs: nnx.Rngs,
     ):
