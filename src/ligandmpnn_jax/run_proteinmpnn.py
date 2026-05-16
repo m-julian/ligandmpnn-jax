@@ -42,17 +42,9 @@ class ProteinMPNNConfig:
     omit_AA_per_residue_multi: dict[str, dict] = field(default_factory=dict)
     omit_AA: str = ""
     verbose: bool = False
-
-    @property
-    def checkopoint(self):
-
-        checkpointer = ocp.StandardCheckpointer()
-        checkpoint = checkpointer.restore(self.checkpoint_path)
-        return checkpoint
-
-    @property
-    def k_neighbors(self) -> int:
-        return self.checkopoint["num_edges"]
+    num_edges: int = 32
+    noise_level: float = 0.3
+    atom_context_num: int = 25
 
     @property
     def seqs_dir(self) -> Path:
@@ -153,11 +145,17 @@ def proteinmpnn_predict(args: argparse.Namespace):
     """
 
     config = ProteinMPNNConfig.from_args(args)
+
+    checkpointer = ocp.StandardCheckpointer()
+    restored = checkpointer.restore(config.checkpoint_path.resolve())
+
+    config.num_edges = restored["num_edges"]
+
     make_directory_structure(config)
 
     # setup seeds
     jax_key = jax.random.key(config.seed)
-    rngs = nnx.Rngs(key=jax_key)
+    rngs = nnx.Rngs(params=jax_key, dropout=jax_key)
     random.seed(config.seed)
     np.random.seed(config.seed)
     device = jax.devices()[0]
@@ -168,17 +166,17 @@ def proteinmpnn_predict(args: argparse.Namespace):
         hidden_dim=128,
         num_encoder_layers=3,
         num_decoder_layers=3,
-        k_neighbors=config.k_neighbors,
+        k_neighbors=config.num_edges,
         device=device,
         atom_context_num=config.atom_context_num,
         model_type=args.model_type,
         rngs=rngs,
     )
 
-    checkpointer = ocp.StandardCheckpointer()
-    _, abstract_state = nnx.split(model)
-    state = checkpointer.restore(config.checkpoint_path, abstract_state)
-    nnx.update(model, state)
+    # checkpointer = ocp.StandardCheckpointer()
+    # _, abstract_state = nnx.split(model)
+    # state = checkpointer.restore(config.checkpoint_path.absolute(), abstract_state)
+    # nnx.update(model, state)
 
     bias_AA = jnp.zeros([21], device=device, dtype=jnp.float32)
     if config.bias_AA:
@@ -200,36 +198,30 @@ def proteinmpnn_predict(args: argparse.Namespace):
 
         fixed_residues = config.fixed_residues_multi[pdb]
         redesigned_residues = config.redesigned_residues_multi[pdb]
-        parse_all_atoms_flag = args.ligand_mpnn_use_side_chain_context or (
-            args.pack_side_chains and not args.repack_everything
-        )
+
         protein_dict, backbone, other_atoms, icodes, _ = parse_PDB(
             pdb,
             device=device,
             chains=parse_these_chains_only_list,
-            parse_all_atoms=parse_all_atoms_flag,
+            parse_all_atoms=False,
             parse_atoms_with_zero_occupancy=args.parse_atoms_with_zero_occupancy,
         )
 
-        with open("output.json", "w") as f:
-            json.dump(protein_dict_to_serializable(protein_dict), f, indent=4)
-
-        exit()
-
         # make chain_letter + residue_idx + insertion_code mapping to integers
-        R_idx_list = list(protein_dict["R_idx"].cpu().numpy())  # residue indices
-        chain_letters_list = list(protein_dict["chain_letters"])  # chain letters
-        encoded_residues = []
-        for i, R_idx_item in enumerate(R_idx_list):
-            tmp = str(chain_letters_list[i]) + str(R_idx_item) + icodes[i]
-            encoded_residues.append(tmp)
+        R_idx_list = np.array(protein_dict["R_idx"]).tolist()
+        chain_letters_list = protein_dict["chain_letters"]
+        encoded_residues = [
+            f"{(chain_letters_list[i])}{R_idx_item}{icodes[i]}"
+            for i, R_idx_item in enumerate(R_idx_list)
+        ]
+
         encoded_residue_dict = dict(zip(encoded_residues, range(len(encoded_residues))))
         encoded_residue_dict_rev = dict(
             zip(list(range(len(encoded_residues))), encoded_residues)
         )
 
-        bias_AA_per_residue = torch.zeros(
-            [len(encoded_residues), 21], device=device, dtype=torch.float32
+        bias_AA_per_residue = jnp.zeros(
+            [len(encoded_residues), 21], device=device, dtype=jnp.float32
         )
         if config.bias_AA_per_residue_multi:
             bias_dict = config.bias_AA_per_residue_multi[pdb]

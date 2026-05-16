@@ -1,3 +1,5 @@
 pytorch_model_params
 model_params
 __pycache__
+jax_parameters
+outputs

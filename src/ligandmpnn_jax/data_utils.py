@@ -216,9 +216,9 @@ def parse_PDB(
     water_atoms = atoms.select("water")  # type: ignore
 
     CA_atoms = protein_atoms.select("name CA")
-    CA_resnums = CA_atoms.getResnums()
-    CA_chain_ids = CA_atoms.getChids()
-    CA_icodes = CA_atoms.getIcodes()
+    CA_resnums = [i.item() for i in CA_atoms.getResnums()]
+    CA_chain_ids = [i.item() for i in CA_atoms.getChids()]
+    CA_icodes = [i.item() for i in CA_atoms.getIcodes()]
 
     CA_dict = {}
     for i in range(len(CA_resnums)):
