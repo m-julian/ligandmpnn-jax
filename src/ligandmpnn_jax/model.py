@@ -32,6 +32,7 @@ class ProteinMPNN(nnx.Module):
             augment_eps=augment_eps,
             rngs=rngs,
         )
+        self.rngs = rngs
 
         # B batch
         # L sequence length
@@ -102,7 +103,7 @@ class ProteinMPNN(nnx.Module):
 
         return h_V, h_E, E_idx
 
-    def sample(self, feature_dict):
+    def sample(self, feature_dict, key: jax.Array):
         # xyz_37 = feature_dict["xyz_37"] #[B,L,37,3] - xyz coordinates for all atoms if needed
         # xyz_37_m = feature_dict["xyz_37_m"] #[B,L,37] - mask for all coords
         # Y = feature_dict["Y"] #[B,L,num_context_atoms,3] - for ligandMPNN coords
@@ -187,8 +188,6 @@ class ProteinMPNN(nnx.Module):
             h_EX_encoder = cat_neighbors_nodes(jnp.zeros_like(h_S), h_E, E_idx)
             h_EXV_encoder = cat_neighbors_nodes(h_V, h_EX_encoder, E_idx)
             h_EXV_encoder_fw = mask_fw * h_EXV_encoder
-
-            key = feature_dict["key"]
 
             for t_ in range(L):
                 t = decoding_order[:, t_]  # [B]
@@ -303,8 +302,6 @@ class ProteinMPNN(nnx.Module):
             h_EX_encoder = cat_neighbors_nodes(jnp.zeros_like(h_S), h_E, E_idx)
             h_EXV_encoder = cat_neighbors_nodes(h_V, h_EX_encoder, E_idx)
             h_EXV_encoder_fw = mask_fw * h_EXV_encoder
-
-            key = feature_dict["key"]
 
             for t_list in new_decoding_order:
                 total_logits = 0.0

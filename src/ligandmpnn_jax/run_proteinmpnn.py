@@ -132,9 +132,10 @@ def proteinmpnn_predict(args: argparse.Namespace):
 
     make_directory_structure(config)
 
-    # setup seeds
     jax_key = jax.random.key(config.seed)
-    rngs = nnx.Rngs(params=jax_key, dropout=jax_key)
+    params_key, dropout_key, sample_key = jax.random.split(jax_key, 3)
+
+    rngs = nnx.Rngs(params=params_key, dropout=dropout_key, sample=sample_key)
     random.seed(config.seed)
     np.random.seed(config.seed)
 
