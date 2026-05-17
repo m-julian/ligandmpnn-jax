@@ -14,7 +14,7 @@ class ProteinMPNN(nnx.Module):
         hidden_dim=128,
         num_encoder_layers=3,
         num_decoder_layers=3,
-        k_neighbors=48,
+        k_neighbors=32,
         augment_eps=0.0,
         dropout=0.0,
         *,
@@ -32,19 +32,34 @@ class ProteinMPNN(nnx.Module):
             rngs=rngs,
         )
 
-        self.W_v = nnx.Linear(node_features, hidden_dim, use_bias=True, rngs=rngs)
-        self.W_c = nnx.Linear(hidden_dim, hidden_dim, use_bias=True, rngs=rngs)
-        self.W_e = nnx.Linear(edge_features, hidden_dim, use_bias=True, rngs=rngs)
+        # B batch
+        # L sequence length
+        # K number of nearest neighbor residues
 
+        # Projects edge features from ProteinFeatures [B,L,K,edge_features] -> [B,L,K,hidden_dim]
+        self.W_e = nnx.Linear(edge_features, hidden_dim, use_bias=True, rngs=rngs)
+        # Embeds integer residue tokens [B,L] -> [B,L,hidden_dim]; used in decoder to embed known/sampled sequence
+        self.W_s = nnx.Embed(
+            num_embeddings=self.num_letters, features=hidden_dim, rngs=rngs
+        )
+        # Projects final node hidden states [B,L,hidden_dim] -> [B,L,21] amino-acid logits
+        self.W_out = nnx.Linear(hidden_dim, self.num_letters, use_bias=True, rngs=rngs)
+
+        # num_in = hidden_dim * 2: each edge message = [h_E | gathered_h_V] = hidden + hidden
+        # W1 input = [h_V_i | h_EV] = hidden + hidden*2 = hidden*3
         self.encoder_layers = nnx.List(
             [
                 EncLayer(hidden_dim, hidden_dim * 2, dropout=dropout, rngs=rngs)
                 for _ in range(num_encoder_layers)
             ]
         )
+        # num_in = hidden_dim * 3: each edge message = [h_E | h_S_neighbors | h_V_neighbors]
+        #   h_ES  = [h_E | gathered_h_S]   -> hidden*2
+        #   h_ESV = [h_ES | gathered_h_V]  -> hidden*3
+        # W1 input = [h_V_i | h_ESV] = hidden + hidden*3 = hidden*4
         self.decoder_layers = nnx.List(
             [
-                DecLayer(hidden_dim, hidden_dim * 2, dropout=dropout, rngs=rngs)
+                DecLayer(hidden_dim, hidden_dim * 3, dropout=dropout, rngs=rngs)
                 for _ in range(num_decoder_layers)
             ]
         )
@@ -55,22 +70,32 @@ class ProteinMPNN(nnx.Module):
         # xyz_37_m = feature_dict["xyz_37_m"] #[B,L,37] - mask for all coords
         # X = feature_dict["X"] #[B,L,4,3] - backbone xyz coordinates for N,CA,C,O
 
-        # [B,L] - integer protein sequence encoded using "restype_STRtoINT"
+        # [B,L]
+        # contains batch and the sequences represented with the numerical alphabet 0-20
         S_true = feature_dict["S"]
 
         # [B,L] - mask for missing regions - should be removed! all ones most of the time
         mask = feature_dict["mask"]
         mask: jax.Array
 
+        # b is batches
+        # l is sequence length
         B, L = S_true.shape
-        device = S_true.device
 
+        # B, L, K, self.edge_features
         E, E_idx = self.features(feature_dict)
-        h_V = jnp.zeros((E.shape[0], E.shape[1], E.shape[-1]), device=device)
+        # B, L, K, self.hidden_dim
         h_E = self.W_e(E)
+        # B, L, self.hidden_dim
 
+        h_V = jnp.zeros((E.shape[0], E.shape[1], E.shape[-1]))
+
+        # B, L, K
         mask_attend = gather_nodes(mask[..., None], E_idx).squeeze(-1)
+        # B, L, K
+        # used to zero out residues which are missing
         mask_attend = mask[..., None] * mask_attend
+
         for layer in self.encoder_layers:
             h_V, h_E = layer(h_V, h_E, E_idx, mask, mask_attend)
 
@@ -113,9 +138,6 @@ class ProteinMPNN(nnx.Module):
         device = S_true.device
 
         h_V, h_E, E_idx = self.encode(feature_dict)
-
-        print(h_V.shape)
-        exit()
 
         chain_mask = mask * chain_mask  # update chain_M to include missing regions
         decoding_order = torch.argsort(
@@ -552,7 +574,7 @@ class ProteinMPNN(nnx.Module):
 
 class PositionalEncodings(nnx.Module):
     def __init__(self, num_embeddings, max_relative_feature=32, *, rngs: nnx.Rngs):
-        super(PositionalEncodings, self).__init__()
+
         self.num_embeddings = num_embeddings
         self.max_relative_feature = max_relative_feature
         self.linear = nnx.Linear(
@@ -560,10 +582,15 @@ class PositionalEncodings(nnx.Module):
         )
 
     def __call__(self, offset, mask):
+
+        # B, L, K
         d = jnp.clip(
             offset + self.max_relative_feature, 0, 2 * self.max_relative_feature
         ) * mask + (1 - mask) * (2 * self.max_relative_feature + 1)
+
+        # B, L, K, 66
         d_onehot = nnx.one_hot(d, 2 * self.max_relative_feature + 1 + 1)
+        # B, L, K, num_embeddings
         E = self.linear(d_onehot)
         return E
 
@@ -589,18 +616,22 @@ class ProteinFeatures(nnx.Module):
         self.num_rbf = num_rbf
         self.num_positional_embeddings = num_positional_embeddings
 
+        # positional embeddings
         self.embeddings = PositionalEncodings(num_positional_embeddings, rngs=rngs)
+        # total edges are the positional embeddings + num_rbf * num_pairs (25)
         edge_in = num_positional_embeddings + num_rbf * 25
+
         self.edge_embedding = nnx.Linear(
             edge_in, edge_features, use_bias=False, rngs=rngs
         )
+
         self.norm_edges = nnx.LayerNorm(edge_features, rngs=rngs)
 
-    def _dist(self, X: jnp.ndarray, mask: jnp.ndarray, eps: float = 1e-6):
+    def _dist(self, Ca: jnp.ndarray, mask: jnp.ndarray, eps: float = 1e-6):
         """Computes distances to residues and finds the closest K residues
 
         Args:
-            X (jnp.ndarray): B x n_residues x 3
+            X (jnp.ndarray): B x L x 3
             mask (jnp.ndarray): _description_
             eps (float, optional): _description_. Defaults to 1e-6.
 
@@ -608,16 +639,29 @@ class ProteinFeatures(nnx.Module):
             _type_: _description_
         """
 
+        # B, L, L
         mask_2D = jnp.expand_dims(mask, 1) * jnp.expand_dims(mask, 2)
-        dX = jnp.expand_dims(X, 1) - jnp.expand_dims(X, 2)
-        D = mask_2D * jnp.sqrt(jnp.sum(dX**2, 3) + eps)
+
+        # Ca distances
+        # B, 1, L, 3 - B, L, 1, 3 ->  B, L, L, 3
+        dX = jnp.expand_dims(Ca, 1) - jnp.expand_dims(Ca, 2)
+
+        # find distance and mask out any non-existing residues which are 0 in mask
+        # set those distances to 0
+        # B, L, L
+        D = mask_2D * jnp.sqrt(jnp.sum(dX**2, axis=-1) + eps)
+        # B, L, 1
         D_max = jnp.max(D, axis=-1, keepdims=True)
+        # replace 0s with the largest distance
+        # so missing residues are never neighbors
         D_adjust = D + (1.0 - mask_2D) * D_max
 
-        k = np.minimum(self.top_k, X.shape[1])
+        # take the minimum between sequence length and topk for neighbors
+        k = np.minimum(self.top_k, Ca.shape[1])
+        # B, L, K
         idx = jnp.argsort(D_adjust, axis=-1)[..., :k]
+        # B, L, K
         D_neighbors = jnp.take_along_axis(D_adjust, idx, axis=-1)
-
         return D_neighbors, idx
 
     def _rbf(self, D):
@@ -641,26 +685,39 @@ class ProteinFeatures(nnx.Module):
 
     def __call__(self, input_features):
 
+        # B, L, 4, 3
+        # 4 is the number of backbone atoms - C, N, C, O
+        # 3 is cartesian coords
         X = input_features["X"]
+        # B, L
         mask = input_features["mask"]
+        # B, L
         R_idx = input_features["R_idx"]
+        # B, L
         chain_labels = input_features["chain_labels"]
 
+        # added during training to prevent memorization
         if self.augment_eps > 0:
             X = X + self.augment_eps * jax.random.normal(self.rngs.noise(), X.shape)
 
-        b = X[:, :, 1, :] - X[:, :, 0, :]
-        c = X[:, :, 2, :] - X[:, :, 1, :]
-        a = jnp.cross(b, c, axis=-1)
-        Cb = -0.58273431 * a + 0.56802827 * b - 0.54067466 * c + X[:, :, 1, :]
         Ca = X[:, :, 1, :]
         N = X[:, :, 0, :]
         C = X[:, :, 2, :]
         O = X[:, :, 3, :]
+        b = Ca - N
+        c = C - Ca
+        a = jnp.cross(b, c, axis=-1)
+        # virtual Cb
+        Cb = -0.58273431 * a + 0.56802827 * b - 0.54067466 * c + Ca
 
+        # K is number of nearest neighbors
+        # D_neighbors - B, L, K
+        # E_idx - B, L, K
         D_neighbors, E_idx = self._dist(Ca, mask)
 
         RBF_all = []
+
+        # B, L, K, n_rbf
         RBF_all.append(self._rbf(D_neighbors))  # Ca-Ca
         RBF_all.append(self._get_rbf(N, N, E_idx))  # N-N
         RBF_all.append(self._get_rbf(C, C, E_idx))  # C-C
@@ -686,18 +743,35 @@ class ProteinFeatures(nnx.Module):
         RBF_all.append(self._get_rbf(C, Cb, E_idx))  # C-Cb
         RBF_all.append(self._get_rbf(O, Cb, E_idx))  # O-Cb
         RBF_all.append(self._get_rbf(C, O, E_idx))  # C-O
+        # B, L, K, 400 (n_rbf*n_pairs)
         RBF_all = jnp.concat(tuple(RBF_all), axis=-1)
 
+        # B, L, 1 - B, 1, L -> B, L, L
         offset = R_idx[:, :, None] - R_idx[:, None, :]
-        offset = gather_edges(offset[:, :, :, None], E_idx)[:, :, :, 0]  # [B, L, K]
+        # B, L, L, 1 -> B, L, K
+        # how far apart are two residues in the sequence
+        offset = gather_edges(offset[:, :, :, None], E_idx)[:, :, :, 0]
 
+        # find self vs non-self interaction
+        # B, L, L
         d_chains = ((chain_labels[:, :, None] - chain_labels[:, None, :]) == 0).astype(
             jnp.int32
-        )  # find self vs non-self interaction
+        )
+        # B, L, L, 1 -> B, L, K
+        # used to check if two residues are on the same chain
+        # because if they are not on the same chain, then the offset above is not really applicable
+        # 1 if same chain, 0 otherwise
         E_chains = gather_edges(d_chains[:, :, :, None], E_idx)[:, :, :, 0]
+
+        # B, L, K, self.num_positional_encodings
         E_positional = self.embeddings(offset, E_chains)
+
+        # B, L, K, (rbf_dims + self.num_positional_encodings)
         E = jnp.concat((E_positional, RBF_all), axis=-1)
+
+        # B, L, K, self.edge_features
         E = self.edge_embedding(E)
+        # B, L, K, self.edge_features
         E = self.norm_edges(E)
 
         return E, E_idx
@@ -718,6 +792,7 @@ class PositionWiseFeedForward(nnx.Module):
 
 class EncLayer(nnx.Module):
     def __init__(self, num_hidden, num_in, dropout=0.1, scale=30, *, rngs: nnx.Rngs):
+
         self.num_hidden = num_hidden
         self.num_in = num_in
         self.scale = scale
@@ -738,34 +813,45 @@ class EncLayer(nnx.Module):
         self.dense = PositionWiseFeedForward(num_hidden, num_hidden * 4, rngs=rngs)
 
     def __call__(self, h_V, h_E, E_idx, mask_V=None, mask_attend=None):
-        """Parallel computation of full transformer layer"""
 
-        h_EV = cat_neighbors_nodes(h_V, h_E, E_idx)
-        # TODO: add in
-        # h_V_expand = h_V.unsqueeze(-2).expand(-1, -1, h_EV.size(-2), -1)
+        # h_V:        [B, L, hidden]
+        # h_E:        [B, L, K, hidden]
+        # E_idx:      [B, L, K]
+        # mask_V:     [B, L]
+        # mask_attend:[B, L, K]
+
+        h_EV = cat_neighbors_nodes(h_V, h_E, E_idx)  # [B, L, K, hidden*2]
         h_V_expand = jnp.broadcast_to(
-            h_V[..., None, :], (*h_V.shape[:2], h_EV.shape[-2], h_V.shape[-1])
-        )
-        h_EV = jnp.concatenate([h_V_expand, h_EV], -1)
-        h_message = self.W3(self.act(self.W2(self.act(self.W1(h_EV)))))
+            h_V[:, :, None, :], (*h_V.shape[:2], h_EV.shape[-2], h_V.shape[-1])
+        )  # [B, L, K, hidden]
+        h_EV = jnp.concatenate([h_V_expand, h_EV], axis=-1)  # [B, L, K, hidden*3]
+        h_message = self.W3(
+            self.act(self.W2(self.act(self.W1(h_EV))))
+        )  # [B, L, K, hidden]
+        # zero out messages from any residues that do not exist
         if mask_attend is not None:
             h_message = mask_attend[..., None] * h_message
-        dh = jnp.sum(h_message, -2) / self.scale
-        h_V = self.norm1(h_V + self.dropout1(dh))
+        # sum across the neighbors
+        dh = jnp.sum(h_message, axis=-2) / self.scale  # [B, L, hidden]
+        h_V = self.norm1(h_V + self.dropout1(dh))  # [B, L, hidden]
 
-        dh = self.dense(h_V)
-        h_V = self.norm2(h_V + self.dropout2(dh))
+        dh = self.dense(h_V)  # [B, L, hidden]
+        h_V = self.norm2(h_V + self.dropout2(dh))  # [B, L, hidden]
         if mask_V is not None:
-            mask_V = mask_V[..., None]
-            h_V = mask_V * h_V
+            h_V = mask_V[..., None] * h_V
 
-        h_EV = cat_neighbors_nodes(h_V, h_E, E_idx)
+        # Edge update
+        h_EV = cat_neighbors_nodes(h_V, h_E, E_idx)  # [B, L, K, hidden*2]
         h_V_expand = jnp.broadcast_to(
-            h_V[..., None, :], (*h_V.shape[:2], h_EV.shape[-2], h_V.shape[-1])
-        )
-        h_EV = jnp.concat([h_V_expand, h_EV], axis=-1)
-        h_message = self.W13(self.act(self.W12(self.act(self.W11(h_EV)))))
-        h_E = self.norm3(h_E + self.dropout3(h_message))
+            h_V[:, :, None, :], (*h_V.shape[:2], h_EV.shape[-2], h_V.shape[-1])
+        )  # [B, L, K, hidden]
+        h_EV = jnp.concatenate([h_V_expand, h_EV], axis=-1)  # [B, L, K, hidden*3]
+        h_message = self.W13(
+            self.act(self.W12(self.act(self.W11(h_EV))))
+        )  # [B, L, K, hidden]
+        h_E = self.norm3(h_E + self.dropout3(h_message))  # [B, L, K, hidden]
+
+        # B, L, n_hidden ; B, L, K, n_hidden. Note that the hidden for nodes and edges are the same here
         return h_V, h_E
 
 

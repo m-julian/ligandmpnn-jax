@@ -300,8 +300,9 @@ def proteinmpnn_predict(args: argparse.Namespace):
         - 1e8 * omit_AA_per_residue[None]
     )
 
+    # update the dictionary with any new keys produced here
+    # i.e. for symmetry and chain mask
     feature_dict.update(other_data_dict)
-
     sampling_probs_list = []
     log_probs_list = []
     decoding_order_list = []
@@ -314,6 +315,8 @@ def proteinmpnn_predict(args: argparse.Namespace):
         feature_dict["randn"] = jax.random.normal(
             subkey, shape=(feature_dict["batch_size"], feature_dict["mask"].shape[1])
         )
+
+        print(feature_dict.keys())
 
         output_dict = model.sample(feature_dict)
 
