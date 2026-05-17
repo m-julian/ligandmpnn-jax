@@ -32,8 +32,6 @@ class ProteinMPNN(nnx.Module):
             augment_eps=augment_eps,
             rngs=rngs,
         )
-        self.rngs = rngs
-
         # B batch
         # L sequence length
         # K number of nearest neighbor residues
@@ -66,7 +64,7 @@ class ProteinMPNN(nnx.Module):
             ]
         )
 
-    def encode(self, feature_dict):
+    def encode(self, feature_dict, noise_key: jax.Array | None = None):
 
         # xyz_37 = feature_dict["xyz_37"] #[B,L,37,3] - xyz coordinates for all atoms if needed
         # xyz_37_m = feature_dict["xyz_37_m"] #[B,L,37] - mask for all coords
@@ -85,7 +83,7 @@ class ProteinMPNN(nnx.Module):
         B, L = S_true.shape
 
         # B, L, K, self.edge_features
-        E, E_idx = self.features(feature_dict)
+        E, E_idx = self.features(feature_dict, noise_key=noise_key)
         # B, L, K, self.hidden_dim
         h_E = self.W_e(E)
         # B, L, self.hidden_dim
@@ -103,7 +101,12 @@ class ProteinMPNN(nnx.Module):
 
         return h_V, h_E, E_idx
 
-    def sample(self, feature_dict, key: jax.Array):
+    def sample(
+        self,
+        feature_dict,
+        key: jax.Array,
+        noise_key: jax.Array | None = None,
+    ):
         # xyz_37 = feature_dict["xyz_37"] #[B,L,37,3] - xyz coordinates for all atoms if needed
         # xyz_37_m = feature_dict["xyz_37_m"] #[B,L,37] - mask for all coords
         # Y = feature_dict["Y"] #[B,L,num_context_atoms,3] - for ligandMPNN coords
@@ -138,7 +141,7 @@ class ProteinMPNN(nnx.Module):
 
         B, L = S_true.shape
 
-        h_V, h_E, E_idx = self.encode(feature_dict)
+        h_V, h_E, E_idx = self.encode(feature_dict, noise_key=noise_key)
 
         chain_mask = mask * chain_mask  # update chain_M to include missing regions
         # [numbers will be smaller for places where chain_M = 0.0 and higher for places where chain_M = 1.0]
@@ -578,7 +581,6 @@ class ProteinFeatures(nnx.Module):
         rngs: nnx.Rngs,
     ):
 
-        self.rngs = rngs
         self.edge_features = edge_features
         self.node_features = node_features
         self.top_k = top_k
@@ -653,7 +655,7 @@ class ProteinFeatures(nnx.Module):
         RBF_A_B = self._rbf(D_A_B_neighbors)
         return RBF_A_B
 
-    def __call__(self, input_features):
+    def __call__(self, input_features, noise_key: jax.Array | None = None):
 
         # B, L, 4, 3
         # 4 is the number of backbone atoms - C, N, C, O
@@ -668,7 +670,9 @@ class ProteinFeatures(nnx.Module):
 
         # added during training to prevent memorization
         if self.augment_eps > 0:
-            X = X + self.augment_eps * jax.random.normal(self.rngs.noise(), X.shape)
+            if noise_key is None:
+                raise ValueError("noise_key must be provided when augment_eps > 0")
+            X = X + self.augment_eps * jax.random.normal(noise_key, X.shape)
 
         Ca = X[:, :, 1, :]
         N = X[:, :, 0, :]
@@ -766,9 +770,9 @@ class EncLayer(nnx.Module):
         self.num_hidden = num_hidden
         self.num_in = num_in
         self.scale = scale
-        self.dropout1 = nnx.Dropout(dropout)
-        self.dropout2 = nnx.Dropout(dropout)
-        self.dropout3 = nnx.Dropout(dropout)
+        self.dropout1 = nnx.Dropout(dropout, rngs=rngs)
+        self.dropout2 = nnx.Dropout(dropout, rngs=rngs)
+        self.dropout3 = nnx.Dropout(dropout, rngs=rngs)
         self.norm1 = nnx.LayerNorm(num_hidden, rngs=rngs)
         self.norm2 = nnx.LayerNorm(num_hidden, rngs=rngs)
         self.norm3 = nnx.LayerNorm(num_hidden, rngs=rngs)

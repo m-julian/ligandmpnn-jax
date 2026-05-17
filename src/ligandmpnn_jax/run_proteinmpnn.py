@@ -133,9 +133,9 @@ def proteinmpnn_predict(args: argparse.Namespace):
     make_directory_structure(config)
 
     jax_key = jax.random.key(config.seed)
-    params_key, dropout_key, sample_key = jax.random.split(jax_key, 3)
+    params_key, dropout_key = jax.random.split(jax_key, 2)
 
-    rngs = nnx.Rngs(params=params_key, dropout=dropout_key, sample=sample_key)
+    rngs = nnx.Rngs(params=params_key, dropout=dropout_key)
     random.seed(config.seed)
     np.random.seed(config.seed)
 
@@ -312,14 +312,14 @@ def proteinmpnn_predict(args: argparse.Namespace):
     loss_per_residue_list = []
     loss_XY_list = []
     for _ in range(args.number_of_batches):
-        jax_key, subkey = jax.random.split(jax_key)
+        jax_key, randn_key, sample_key = jax.random.split(jax_key, 3)
         feature_dict["randn"] = jax.random.normal(
-            subkey, shape=(feature_dict["batch_size"], feature_dict["mask"].shape[1])
+            randn_key, shape=(feature_dict["batch_size"], feature_dict["mask"].shape[1])
         )
 
         print(feature_dict.keys())
 
-        output_dict = model.sample(feature_dict)
+        output_dict = model.sample(feature_dict, key=sample_key)
 
         exit()
 
