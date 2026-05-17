@@ -40,7 +40,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--temperature", type=float, default=0.1, help="Sampling temperature."
     )
-    parser.add_argument("--verbose", type=int, default=1, help="Verbosity level.")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Print progress information.")
     parser.add_argument(
         "--save_stats", type=int, default=0, help="Save output statistics."
     )
@@ -51,22 +51,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Space-separated fixed residues, e.g. 'A12 A13 B2'.",
     )
     parser.add_argument(
-        "--fixed_residues_multi",
-        type=str,
-        default="",
-        help="Path to JSON mapping fixed residues per PDB.",
-    )
-    parser.add_argument(
-        "--redesigned_residues",
+        "--residues_to_design",
         type=str,
         default="",
         help="Space-separated residues to redesign; all others are fixed.",
-    )
-    parser.add_argument(
-        "--redesigned_residues_multi",
-        type=str,
-        default="",
-        help="Path to JSON mapping redesigned residues per PDB.",
     )
     parser.add_argument(
         "--bias_AA",

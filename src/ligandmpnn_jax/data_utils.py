@@ -164,6 +164,33 @@ def get_aligned_coordinates(protein_atoms: AtomGroup, CA_dict: dict, atom_name: 
 
 
 class InputDataDict(TypedDict):
+    """Per-residue protein features parsed from a PDB file.
+
+    Protein backbone:
+        X:            (L, 4, 3)  Backbone atom coordinates in order [N, CA, C, O].
+        mask:         (L,)       1 where all four backbone atoms are present, 0 otherwise.
+        xyz_37:       (L, 37, 3) Full all-atom coordinates indexed by standard atom order.
+        xyz_37_m:     (L, 37)    1 where the corresponding atom in xyz_37 is present.
+        # note that all heavy atom names are included here, see constants for atom names
+
+    Sequence:
+        S:            (L,)  Integer-encoded amino acid sequence (RESTYPE_STRTOINT mapping).
+
+    Residue numbering:
+        R_idx:        (L,)  PDB residue numbers (may contain duplicates for insertion codes).
+        chain_labels: (L,)  Integer chain index per residue (0-based, from ProDy getChindices).
+        chain_letters: list[str]  Chain ID character per residue, same order as R_idx.
+        chain_list:   list[str]  Sorted unique chain IDs present in the structure.
+        mask_c:       list[(L,) bool]  One boolean mask per chain in chain_list; True where
+                      a residue belongs to that chain.
+
+    Ligand / non-protein context (LigandMPNN):
+        Y:            (M, 3)  Coordinates of non-protein, non-water atoms (ligand context).
+        Y_t:          (M,)    Element type index for each context atom (ELEMENT_LIST mapping;
+                      0 = unknown, hydrogen atoms are excluded via Y_m).
+        Y_m:          (M,)    1 for valid context atoms (excludes H and unknown elements).
+    """
+
     X: jax.Array
     mask: jax.Array
     Y: jax.Array
@@ -181,14 +208,12 @@ class InputDataDict(TypedDict):
 
 def parse_PDB(
     input_path: str,
-    device: str = "cpu",
-    chains: list = [],
+    chains: tuple = (),
     parse_all_atoms: bool = False,
     parse_atoms_with_zero_occupancy: bool = False,
 ) -> tuple[InputDataDict, Selection, Selection, Any, Selection]:
     """
     input_path : path for the input PDB
-    device: device for the torch.Tensor
     chains: a list specifying which chains need to be parsed; e.g. ["A", "B"]
     parse_all_atoms: if False parse only N,CA,C,O otherwise all 37 atoms
     parse_atoms_with_zero_occupancy: if True atoms with zero occupancy will be parsed
@@ -277,16 +302,14 @@ def parse_PDB(
         Y_m = np.zeros([1], np.int32)
 
     output_dict: dict[str, Any] = {}
-    output_dict["X"] = jnp.array(X, device=device, dtype=jnp.float32)
-    output_dict["mask"] = jnp.array(mask, device=device, dtype=jnp.int32)
-    output_dict["Y"] = jnp.array(Y, device=device, dtype=jnp.float32)
-    output_dict["Y_t"] = jnp.array(Y_t, device=device, dtype=jnp.int32)
-    output_dict["Y_m"] = jnp.array(Y_m, device=device, dtype=jnp.int32)
+    output_dict["X"] = jnp.array(X, dtype=jnp.float32)
+    output_dict["mask"] = jnp.array(mask, dtype=jnp.int32)
+    output_dict["Y"] = jnp.array(Y, dtype=jnp.float32)
+    output_dict["Y_t"] = jnp.array(Y_t, dtype=jnp.int32)
+    output_dict["Y_m"] = jnp.array(Y_m, dtype=jnp.int32)
 
-    output_dict["R_idx"] = jnp.array(R_idx, device=device, dtype=jnp.int32)
-    output_dict["chain_labels"] = jnp.array(
-        chain_labels, device=device, dtype=jnp.int32
-    )
+    output_dict["R_idx"] = jnp.array(R_idx, dtype=jnp.int32)
+    output_dict["chain_labels"] = jnp.array(chain_labels, dtype=jnp.int32)
 
     output_dict["chain_letters"] = CA_chain_ids
 
@@ -297,21 +320,15 @@ def parse_PDB(
     mask_c = []
     chain_list = sorted(list(set(CA_chain_ids)))
     for chain in chain_list:
-        mask_c.append(
-            jnp.array(
-                [chain == item for item in CA_chain_ids],
-                device=device,
-                dtype=bool,
-            )
-        )
+        mask_c.append(jnp.array([chain == item for item in CA_chain_ids], dtype=bool))
 
     output_dict["mask_c"] = mask_c
     output_dict["chain_list"] = chain_list
 
-    output_dict["S"] = jnp.array(S, device=device, dtype=jnp.int32)
+    output_dict["S"] = jnp.array(S, dtype=jnp.int32)
 
-    output_dict["xyz_37"] = jnp.array(xyz_37, device=device, dtype=jnp.float32)
-    output_dict["xyz_37_m"] = jnp.array(xyz_37_m, device=device, dtype=jnp.int32)
+    output_dict["xyz_37"] = jnp.array(xyz_37, dtype=jnp.float32)
+    output_dict["xyz_37_m"] = jnp.array(xyz_37_m, dtype=jnp.int32)
 
     return (
         cast(InputDataDict, output_dict),
@@ -323,7 +340,6 @@ def parse_PDB(
 
 
 def get_nearest_neighbours(CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms):
-    device = CB.device
     mask_CBY = mask[:, None] * Y_m[None, :]  # [A,B]
     L2_AB = jnp.sum((CB[:, None, :] - Y[None, :, :]) ** 2, -1)
     L2_AB = L2_AB * mask_CBY + (1 - mask_CBY) * 1000.0
@@ -336,15 +352,9 @@ def get_nearest_neighbours(CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms):
     Y_t_tmp = Y_t[nn_idx]  # [A, k]
     Y_m_tmp = Y_m[nn_idx]  # [A, k]
 
-    Y_out = jnp.zeros(
-        [CB.shape[0], number_of_ligand_atoms, 3], dtype=jnp.float32, device=device
-    )
-    Y_t_out = jnp.zeros(
-        [CB.shape[0], number_of_ligand_atoms], dtype=jnp.int32, device=device
-    )
-    Y_m_out = jnp.zeros(
-        [CB.shape[0], number_of_ligand_atoms], dtype=jnp.int32, device=device
-    )
+    Y_out = jnp.zeros([CB.shape[0], number_of_ligand_atoms, 3], dtype=jnp.float32)
+    Y_t_out = jnp.zeros([CB.shape[0], number_of_ligand_atoms], dtype=jnp.int32)
+    Y_m_out = jnp.zeros([CB.shape[0], number_of_ligand_atoms], dtype=jnp.int32)
 
     num_nn_update = Y_tmp.shape[1]
     Y_out = Y_out.at[:, :num_nn_update].set(Y_tmp)
@@ -354,37 +364,11 @@ def get_nearest_neighbours(CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms):
     return Y_out, Y_t_out, Y_m_out, D_AB_closest
 
 
-def featurize(
+def featurize_proteinmpnn(
     input_dict: InputDataDict,
-    cutoff_for_score: float = 8.0,
-    use_atom_context: bool = True,
-    number_of_ligand_atoms: int = 16,
-    model_type: str = "protein_mpnn",
 ):
-    output_dict = {}
-    if model_type == "ligand_mpnn":
-        mask = input_dict["mask"]
-        Y = input_dict["Y"]
-        Y_t = input_dict["Y_t"]
-        Y_m = input_dict["Y_m"]
-        N = input_dict["X"][:, 0, :]
-        CA = input_dict["X"][:, 1, :]
-        C = input_dict["X"][:, 2, :]
-        b = CA - N
-        c = C - CA
-        a = jnp.cross(b, c, axis=-1)
-        CB = -0.58273431 * a + 0.56802827 * b - 0.54067466 * c + CA
-        Y, Y_t, Y_m, D_XY = get_nearest_neighbours(
-            CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms
-        )
-        mask_XY = (D_XY < cutoff_for_score) * mask * Y_m[:, 0]
-        output_dict["mask_XY"] = mask_XY[None,]
 
-        output_dict["Y"] = Y[None,]
-        output_dict["Y_t"] = Y_t[None,]
-        output_dict["Y_m"] = Y_m[None,]
-        if not use_atom_context:
-            output_dict["Y_m"] = 0.0 * output_dict["Y_m"]
+    output_dict = {}
 
     R_idx_list = []
     count = 0
@@ -394,13 +378,14 @@ def featurize(
             count += 1
         R_idx_list.append(R_idx + count)
         R_idx_prev = R_idx
-    R_idx_renumbered = jnp.array(R_idx_list, device=R_idx.device)
+    R_idx_renumbered = jnp.array(R_idx_list)
+
+    # add batch dimension
     output_dict["R_idx"] = R_idx_renumbered[None,]
     output_dict["R_idx_original"] = input_dict["R_idx"][None,]
     output_dict["chain_labels"] = input_dict["chain_labels"][None,]
     output_dict["S"] = input_dict["S"][None,]
     output_dict["mask"] = input_dict["mask"][None,]
-
     output_dict["X"] = input_dict["X"][None,]
 
     if "xyz_37" in list(input_dict):
@@ -408,3 +393,59 @@ def featurize(
         output_dict["xyz_37_m"] = input_dict["xyz_37_m"][None,]
 
     return output_dict
+
+
+# def featurize(
+#     input_dict: InputDataDict,
+#     cutoff_for_score: float = 8.0,
+#     use_atom_context: bool = True,
+#     number_of_ligand_atoms: int = 16,
+#     model_type: str = "protein_mpnn",
+# ):
+# output_dict = {}
+# if model_type == "ligand_mpnn":
+#     mask = input_dict["mask"]
+#     Y = input_dict["Y"]
+#     Y_t = input_dict["Y_t"]
+#     Y_m = input_dict["Y_m"]
+#     N = input_dict["X"][:, 0, :]
+#     CA = input_dict["X"][:, 1, :]
+#     C = input_dict["X"][:, 2, :]
+#     b = CA - N
+#     c = C - CA
+#     a = jnp.cross(b, c, axis=-1)
+#     CB = -0.58273431 * a + 0.56802827 * b - 0.54067466 * c + CA
+#     Y, Y_t, Y_m, D_XY = get_nearest_neighbours(
+#         CB, mask, Y, Y_t, Y_m, number_of_ligand_atoms
+#     )
+#     mask_XY = (D_XY < cutoff_for_score) * mask * Y_m[:, 0]
+#     output_dict["mask_XY"] = mask_XY[None,]
+
+#     output_dict["Y"] = Y[None,]
+#     output_dict["Y_t"] = Y_t[None,]
+#     output_dict["Y_m"] = Y_m[None,]
+#     if not use_atom_context:
+#         output_dict["Y_m"] = 0.0 * output_dict["Y_m"]
+
+# R_idx_list = []
+# count = 0
+# R_idx_prev = -100000
+# for R_idx in list(input_dict["R_idx"]):
+#     if R_idx_prev == R_idx:
+#         count += 1
+#     R_idx_list.append(R_idx + count)
+#     R_idx_prev = R_idx
+# R_idx_renumbered = jnp.array(R_idx_list, device=R_idx.device)
+# output_dict["R_idx"] = R_idx_renumbered[None,]
+# output_dict["R_idx_original"] = input_dict["R_idx"][None,]
+# output_dict["chain_labels"] = input_dict["chain_labels"][None,]
+# output_dict["S"] = input_dict["S"][None,]
+# output_dict["mask"] = input_dict["mask"][None,]
+
+# output_dict["X"] = input_dict["X"][None,]
+
+# if "xyz_37" in list(input_dict):
+#     output_dict["xyz_37"] = input_dict["xyz_37"][None,]
+#     output_dict["xyz_37_m"] = input_dict["xyz_37_m"][None,]
+
+# return output_dict

@@ -3,3 +3,5 @@ model_params
 __pycache__
 jax_parameters
 outputs
+.claude/settings.json
+.cluade

@@ -192,8 +192,8 @@ ELEMENT_LIST = [
     "Uus",
     "Uuo",
 ]
-# element_dict = dict(zip(element_list, range(1,len(element_list))))
-element_dict_rev = dict(zip(range(1, len(ELEMENT_LIST)), ELEMENT_LIST))
+ELEMENT_DICT = dict(zip(ELEMENT_LIST, range(1, len(ELEMENT_LIST))))
+ELEMENT_DICT_REV = dict(zip(range(1, len(ELEMENT_LIST)), ELEMENT_LIST))
 
 RESTYPE_INTTOSTR = {
     0: "A",
