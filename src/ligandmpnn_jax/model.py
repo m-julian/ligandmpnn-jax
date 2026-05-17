@@ -165,11 +165,17 @@ class ProteinMPNN(nnx.Module):
                 permutation_matrix_reverse,
             )
 
+            # B, L, K, 1
             mask_attend = jnp.take_along_axis(order_mask_backward, E_idx, axis=2)[
                 ..., None
             ]
+
+            # B, L, 1, 1
             mask_1D = mask.reshape(B, L, 1, 1)
+
+            # B, L, K, 1
             mask_bw = mask_1D * mask_attend
+
             mask_fw = mask_1D * (1.0 - mask_attend)
 
             # repeat for decoding
