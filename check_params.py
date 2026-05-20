@@ -1,13 +1,8 @@
 """
 Compare JAX (orbax) checkpoint parameters against the original PyTorch checkpoint.
 
-The conversion script stored all tensors as plain np.array() copies (no transpose),
-so shapes and values should be byte-for-byte identical. We verify that here.
-
-Note: Flax Linear uses [in, out] weight convention while PyTorch uses [out, in],
-but the JAX model uses these weights with the PyTorch convention in mind
-(either by using them transposed in forward passes, or by storing them as-is).
-This script just checks that the stored bytes are identical.
+Linear weights are transposed during conversion (PyTorch [out, in] -> Flax [in, out]),
+so we apply the same transform before comparing. All other tensors are stored as-is.
 """
 
 import numpy as np
@@ -47,18 +42,26 @@ if extra_in_jax or missing_in_jax:
 common_keys = pt_keys & jax_keys
 print(f"\nComparing {len(common_keys)} shared parameters ...\n")
 
+
+def expected_jax_arr(key: str, pt_arr: np.ndarray) -> np.ndarray:
+    if pt_arr.ndim == 2 and key.endswith(".weight") and "embedding" not in key:
+        return pt_arr.T
+    return pt_arr
+
+
 mismatches = []
 for key in sorted(common_keys):
     pt_arr = pt_sd[key].numpy()
     jax_arr = np.array(jax_params[key])
+    expected = expected_jax_arr(key, pt_arr)
 
-    if pt_arr.shape != jax_arr.shape:
-        mismatches.append((key, "SHAPE", pt_arr.shape, jax_arr.shape, None))
+    if expected.shape != jax_arr.shape:
+        mismatches.append((key, "SHAPE", expected.shape, jax_arr.shape, None))
         continue
 
-    max_diff = np.max(np.abs(pt_arr - jax_arr))
+    max_diff = np.max(np.abs(expected - jax_arr))
     if max_diff > 1e-6:
-        mismatches.append((key, "VALUES", pt_arr.shape, jax_arr.shape, max_diff))
+        mismatches.append((key, "VALUES", expected.shape, jax_arr.shape, max_diff))
     else:
         print(f"  OK  {key:60s}  shape={jax_arr.shape}  max_diff={max_diff:.2e}")
 

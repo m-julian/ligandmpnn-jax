@@ -4,7 +4,8 @@ import orbax.checkpoint as ocp
 from pathlib import Path
 
 # download original parameters with the .sh script that is already provided
-pt_checkpoint_path = "model_params/ligandmpnn_v_32_030_25.pt"
+# to a directory. Then modify this line
+pt_checkpoint_path = "pytorch_model_params/ligandmpnn_v_32_030_25.pt"
 
 parent_out_dir = Path("jax_parameters")
 parent_out_dir.mkdir(exist_ok=True)
@@ -17,8 +18,19 @@ print(pt_checkpoint.keys())
 
 state_dict = pt_checkpoint["model_state_dict"]
 
+
+def convert_tensor(k: str, v: torch.Tensor) -> np.ndarray:
+    arr = v.numpy()
+    # PyTorch Linear weight is [out, in]; Flax Linear kernel is [in, out]
+    if arr.ndim == 2 and k.endswith(".weight") and "embedding" not in k:
+        arr = arr.T
+    return np.array(arr)
+
+
 jax_params = {
-    k: np.array(v.numpy()) for k, v in state_dict.items() if isinstance(v, torch.Tensor)
+    k: convert_tensor(k, v)
+    for k, v in state_dict.items()
+    if isinstance(v, torch.Tensor)
 }
 
 checkpoint_data = {
