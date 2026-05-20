@@ -68,7 +68,7 @@ class ProteinMPNNConfig:
             "Residues cannot be both fixed and designated for design"
         )
 
-        checkpoint_path = Path(args.checkpoint_protein_mpnn)
+        checkpoint_path = Path(args.checkpoint_proteinmpnn)
         assert checkpoint_path.exists(), (
             f"The model path {checkpoint_path} does not exist."
         )

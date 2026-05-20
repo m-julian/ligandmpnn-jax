@@ -40,7 +40,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--temperature", type=float, default=0.1, help="Sampling temperature."
     )
-    parser.add_argument("--verbose", action="store_true", default=False, help="Print progress information.")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Print progress information.",
+    )
     parser.add_argument(
         "--save_stats", type=int, default=0, help="Save output statistics."
     )
@@ -228,7 +233,7 @@ def build_protein_mpnn_parser(subparsers) -> None:
         help="Model variant to use.",
     )
     parser.add_argument(
-        "--checkpoint_protein_mpnn",
+        "--checkpoint_proteinmpnn",
         type=str,
         default="./model_params/proteinmpnn_v_48_020.pt",
         help="Path to ProteinMPNN weights.",
