@@ -1,7 +1,7 @@
 [project]
 name = "ligandmpnn-jax"
 version = "0.1.0"
-description = "Add your description here"
+description = "LigandMPNN JAX Port, work in progress"
 readme = "README.md"
 authors = [
     { name = "m-julian", email = "52214154+m-julian@users.noreply.github.com" }
