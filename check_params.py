@@ -44,7 +44,12 @@ print(f"\nComparing {len(common_keys)} shared parameters ...\n")
 
 
 def expected_jax_arr(key: str, pt_arr: np.ndarray) -> np.ndarray:
-    if pt_arr.ndim == 2 and key.endswith(".weight") and "embedding" not in key:
+    # W_s is an embedding layer, not a linear layer
+    # so this is why it needs to be excluded
+    is_linear_weight = (
+        pt_arr.ndim == 2 and key.endswith(".weight") and key != "W_s.weight"
+    )
+    if is_linear_weight:
         return pt_arr.T
     return pt_arr
 
