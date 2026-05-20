@@ -19,3 +19,13 @@ I've changed the way the configuration and how data is passed around the code to
 - [ ] LigandMPNN
 - [ ] Membrane models
 - [ ] Packing
+
+## Generating a Sequence
+
+```
+.venv/bin/python -m ligandmpnn_jax.cli protein-mpnn \
+  --pdb_path path_to_pdb_file \
+  --out_folder path_to_output_dir \
+  --checkpoint_proteinmpnn path_to_jax_dir \
+  --seed 42 --batch_size 1 --number_of_batches 1 --verbose 2>&1
+```
