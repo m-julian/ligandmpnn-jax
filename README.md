@@ -18,3 +18,4 @@ I've changed the way the configuration and how data is passed around the code to
 - [x] ProteinMPNN
 - [ ] LigandMPNN
 - [ ] Membrane models
+- [ ] Packing
