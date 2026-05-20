@@ -10,7 +10,7 @@ from .data_utils import (
     parse_PDB,
     write_full_PDB,
 )
-from .constants import ALPHABET, RESTYPE_STRTOINT, ELEMENT_DICT
+from .constants import ALPHABET, RESTYPE_STRTOINT, ELEMENT_DICT, RESTYPE_1TO3
 from .model import ProteinMPNN
 from prody import writePDB
 import jax
@@ -317,11 +317,7 @@ def proteinmpnn_predict(args: argparse.Namespace):
             randn_key, shape=(feature_dict["batch_size"], feature_dict["mask"].shape[1])
         )
 
-        print(feature_dict.keys())
-
         output_dict = model.sample(feature_dict, key=sample_key)
-
-        exit()
 
         # compute confidence scores
         loss, loss_per_residue = get_score(
@@ -348,13 +344,13 @@ def proteinmpnn_predict(args: argparse.Namespace):
         loss_list.append(loss)
         loss_per_residue_list.append(loss_per_residue)
         loss_XY_list.append(loss_XY)
-    S_stack = torch.cat(S_list, 0)
-    log_probs_stack = torch.cat(log_probs_list, 0)
-    sampling_probs_stack = torch.cat(sampling_probs_list, 0)
-    decoding_order_stack = torch.cat(decoding_order_list, 0)
-    loss_stack = torch.cat(loss_list, 0)
-    loss_per_residue_stack = torch.cat(loss_per_residue_list, 0)
-    loss_XY_stack = torch.cat(loss_XY_list, 0)
+    S_stack = jnp.concat(S_list, axis=0)
+    log_probs_stack = jnp.concat(log_probs_list, axis=0)
+    sampling_probs_stack = jnp.concat(sampling_probs_list, axis=0)
+    decoding_order_stack = jnp.concat(decoding_order_list, axis=0)
+    loss_stack = jnp.concat(loss_list, axis=0)
+    loss_per_residue_stack = jnp.concat(loss_per_residue_list, axis=0)
+    loss_XY_stack = jnp.concat(loss_XY_list, axis=0)
     rec_mask = feature_dict["mask"][:1] * feature_dict["chain_mask"][:1]
     rec_stack = get_seq_rec(feature_dict["S"][:1], S_stack, rec_mask)
 
@@ -374,17 +370,17 @@ def proteinmpnn_predict(args: argparse.Namespace):
     output_stats_path = config.out_dir + "stats/" + name + args.file_ending + ".pt"
 
     out_dict = {}
-    out_dict["generated_sequences"] = S_stack.cpu()
-    out_dict["sampling_probs"] = sampling_probs_stack.cpu()
-    out_dict["log_probs"] = log_probs_stack.cpu()
-    out_dict["decoding_order"] = decoding_order_stack.cpu()
-    out_dict["native_sequence"] = feature_dict["S"][0].cpu()
-    out_dict["mask"] = feature_dict["mask"][0].cpu()
-    out_dict["chain_mask"] = feature_dict["chain_mask"][0].cpu()
-    out_dict["seed"] = seed
+    out_dict["generated_sequences"] = np.array(S_stack)
+    out_dict["sampling_probs"] = np.array(sampling_probs_stack)
+    out_dict["log_probs"] = np.array(log_probs_stack)
+    out_dict["decoding_order"] = np.array(decoding_order_stack)
+    out_dict["native_sequence"] = np.array(feature_dict["S"][0])
+    out_dict["mask"] = np.array(feature_dict["mask"][0])
+    out_dict["chain_mask"] = np.array(feature_dict["chain_mask"][0])
+    out_dict["seed"] = config.seed
     out_dict["temperature"] = args.temperature
     if args.save_stats:
-        torch.save(out_dict, output_stats_path)
+        np.save(output_stats_path, out_dict)
 
     if args.pack_side_chains:
         if args.verbose:
@@ -480,8 +476,8 @@ def proteinmpnn_predict(args: argparse.Namespace):
             bfactor_prody = (
                 loss_per_residue_stack[ix].cpu().numpy()[None, :].repeat(4, 1)
             )
-            backbone.setResnames(seq_prody)
-            backbone.setBetas(
+            backbone.setResnames(seq_prody)  # type: ignore
+            backbone.setBetas(  # type: ignore
                 np.exp(-bfactor_prody) * (bfactor_prody > 0.01).astype(np.float32)
             )
             if other_atoms:
@@ -505,32 +501,33 @@ def proteinmpnn_predict(args: argparse.Namespace):
                     backbone,
                 )
 
+            # TODO: add back in
             # write full PDB files
-            if args.pack_side_chains:
-                for c_pack in range(args.number_of_packs_per_design):
-                    X_stack = X_stack_list[c_pack]
-                    X_m_stack = X_m_stack_list[c_pack]
-                    b_factor_stack = b_factor_stack_list[c_pack]
-                    write_full_PDB(
-                        output_packed
-                        + name
-                        + args.packed_suffix
-                        + "_"
-                        + str(ix_suffix)
-                        + "_"
-                        + str(c_pack + 1)
-                        + args.file_ending
-                        + ".pdb",
-                        X_stack[ix].cpu().numpy(),
-                        X_m_stack[ix].cpu().numpy(),
-                        b_factor_stack[ix].cpu().numpy(),
-                        feature_dict["R_idx_original"][0].cpu().numpy(),
-                        protein_dict["chain_letters"],
-                        S_stack[ix].cpu().numpy(),
-                        other_atoms=other_atoms,
-                        icodes=icodes,
-                        force_hetatm=args.force_hetatm,
-                    )
+            # if args.pack_side_chains:
+            #     for c_pack in range(args.number_of_packs_per_design):
+            #         X_stack = X_stack_list[c_pack]
+            #         X_m_stack = X_m_stack_list[c_pack]
+            #         b_factor_stack = b_factor_stack_list[c_pack]
+            #         write_full_PDB(
+            #             output_packed
+            #             + name
+            #             + args.packed_suffix
+            #             + "_"
+            #             + str(ix_suffix)
+            #             + "_"
+            #             + str(c_pack + 1)
+            #             + args.file_ending
+            #             + ".pdb",
+            #             X_stack[ix].cpu().numpy(),
+            #             X_m_stack[ix].cpu().numpy(),
+            #             b_factor_stack[ix].cpu().numpy(),
+            #             feature_dict["R_idx_original"][0].cpu().numpy(),
+            #             protein_dict["chain_letters"],
+            #             S_stack[ix].cpu().numpy(),
+            #             other_atoms=other_atoms,
+            #             icodes=icodes,
+            #             force_hetatm=args.force_hetatm,
+            #         )
             # -----
 
             # write fasta lines
