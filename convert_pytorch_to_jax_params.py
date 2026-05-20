@@ -21,8 +21,10 @@ state_dict = pt_checkpoint["model_state_dict"]
 
 def convert_tensor(k: str, v: torch.Tensor) -> np.ndarray:
     arr = v.numpy()
-    # PyTorch Linear weight is [out, in]; Flax Linear kernel is [in, out]
-    if arr.ndim == 2 and k.endswith(".weight") and "embedding" not in k:
+    # PyTorch Linear weight is [out, in]; Flax Linear kernel is [in, out].
+    # W_s is an Embed layer (vocab lookup), not a Linear, so its weight stays as-is.
+    is_linear_weight = arr.ndim == 2 and k.endswith(".weight") and k != "W_s.weight"
+    if is_linear_weight:
         arr = arr.T
     return np.array(arr)
 
