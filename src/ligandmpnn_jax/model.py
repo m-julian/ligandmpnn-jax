@@ -15,6 +15,8 @@ class ProteinMPNN(nnx.Module):
         hidden_dim=128,
         num_encoder_layers=3,
         num_decoder_layers=3,
+        # in the original it is 48 , but the loaded model has 32
+        # have to benchmark these at some point
         k_neighbors=32,
         augment_eps=0.0,
         dropout=0.0,

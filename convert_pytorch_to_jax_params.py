@@ -3,6 +3,7 @@ import numpy as np
 import orbax.checkpoint as ocp
 from pathlib import Path
 
+# download original parameters with the .sh script that is already provided
 pt_checkpoint_path = "model_params/ligandmpnn_v_32_030_25.pt"
 
 parent_out_dir = Path("jax_parameters")
@@ -16,9 +17,6 @@ print(pt_checkpoint.keys())
 
 state_dict = pt_checkpoint["model_state_dict"]
 
-# Use np.array (not jnp.array) to avoid saving device-specific sharding metadata.
-# jnp.array records SingleDeviceSharding(cpu:0) which causes topology mismatch
-# errors when restoring on a different backend (e.g. GPU).
 jax_params = {
     k: np.array(v.numpy()) for k, v in state_dict.items() if isinstance(v, torch.Tensor)
 }
