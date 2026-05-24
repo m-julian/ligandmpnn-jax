@@ -3,7 +3,7 @@ from typing import Any
 
 import jax
 import numpy as np
-from .model import ProteinMPNN
+from .proteinmpnn_model import ProteinMPNN
 from flax import nnx
 import orbax.checkpoint as ocp
 from pathlib import Path
